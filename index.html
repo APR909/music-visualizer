@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Visualizador de Audio</title>
+<meta name="description" content="Visualizador de audio en tiempo real con análisis de frecuencias, más un reproductor de YouTube. Proyecto personal de Alejandro Provencio.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300..900&family=Work+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="https://apr909.github.io/Portfolio/#projects">
+    <span class="brand-mark">AP</span>
+    <span class="brand-name">Visualizador <em>de Audio</em></span>
+  </a>
+  <span class="build-tag mono">// proyecto personal · Web Audio API</span>
+</header>
+
+<main class="stage">
+
+  <!-- YOUTUBE PLAYER -->
+  <section class="panel" id="youtube-panel">
+    <p class="eyebrow mono">// reproductor</p>
+    <h2>Reproductor de YouTube</h2>
+    <p class="panel-note">Pega un enlace y dale a reproducir. Esto es solo un reproductor cómodo — por restricciones de seguridad del navegador, no es posible analizar en tiempo real el audio de un vídeo de YouTube incrustado, así que esta sección no está conectada al visualizador de abajo.</p>
+
+    <form id="yt-form" class="yt-form">
+      <input id="yt-url" type="text" placeholder="https://www.youtube.com/watch?v=..." autocomplete="off" spellcheck="false">
+      <button type="submit" class="btn-primary">Cargar</button>
+    </form>
+    <p id="yt-error" class="field-error hidden">No he podido reconocer ese enlace. Prueba con una URL normal de YouTube.</p>
+
+    <div class="yt-embed-wrap">
+      <div id="yt-embed-empty" class="yt-embed-empty">
+        <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="5" width="20" height="14" rx="3"/><path d="M10 9.5l5 2.5-5 2.5z" fill="currentColor" stroke="none"/></svg>
+        <p>Aquí aparecerá el vídeo</p>
+      </div>
+      <div id="yt-player"></div>
+    </div>
+  </section>
+
+  <!-- AUDIO VISUALIZER -->
+  <section class="panel" id="visualizer-panel">
+    <p class="eyebrow mono">// visualizador</p>
+    <h2>Visualizador de audio</h2>
+    <p class="panel-note">Sube un archivo de audio de tu ordenador — el análisis de frecuencias es real, calculado en directo con la Web Audio API mientras suena.</p>
+
+    <div id="dropzone" class="dropzone">
+      <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 16V4m0 0L7 9m5-5l5 5"/><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
+      <p><strong>Arrastra un archivo de audio aquí</strong><br>o haz clic para elegirlo</p>
+      <input id="file-input" type="file" accept="audio/*" hidden>
+    </div>
+    <p id="file-error" class="field-error hidden">Ese archivo no parece ser de audio. Prueba con un MP3, WAV o similar.</p>
+
+    <div id="player-controls" class="player-controls hidden">
+      <p id="file-name" class="file-name mono"></p>
+
+      <canvas id="viz-canvas" width="900" height="280"></canvas>
+
+      <div class="transport">
+        <button id="btn-play" class="btn-icon" aria-label="Reproducir">
+          <svg id="icon-play" viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+          <svg id="icon-pause" viewBox="0 0 24 24" width="20" height="20" fill="currentColor" class="hidden"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>
+        </button>
+        <span id="time-current" class="mono time">0:00</span>
+        <input id="seek" type="range" min="0" max="100" value="0" step="0.1">
+        <span id="time-duration" class="mono time">0:00</span>
+      </div>
+
+      <div class="editor-row">
+        <label class="editor-control">
+          <span>Estilo</span>
+          <select id="viz-style">
+            <option value="bars">Barras</option>
+            <option value="mirror">Barras espejo</option>
+            <option value="wave">Forma de onda</option>
+            <option value="circle">Círculo</option>
+          </select>
+        </label>
+
+        <label class="editor-control">
+          <span>Volumen</span>
+          <input id="volume" type="range" min="0" max="1.4" value="1" step="0.01">
+        </label>
+
+        <label class="editor-control">
+          <span>Velocidad</span>
+          <input id="speed" type="range" min="0.5" max="1.75" value="1" step="0.05">
+          <span id="speed-value" class="mono">1.00×</span>
+        </label>
+
+        <label class="editor-control">
+          <span>Sensibilidad</span>
+          <input id="sensitivity" type="range" min="0.5" max="2.5" value="1.3" step="0.05">
+        </label>
+      </div>
+    </div>
+
+    <audio id="audio-el" preload="metadata"></audio>
+  </section>
+
+</main>
+
+<footer class="site-footer mono">
+  <a href="https://apr909.github.io/Portfolio/#projects">← volver al portfolio</a>
+</footer>
+
+<script src="js/main.js" type="module"></script>
+</body>
+</html>
