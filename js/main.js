@@ -67,6 +67,30 @@ const speedEl = document.getElementById("speed");
 const speedValueEl = document.getElementById("speed-value");
 const sensitivityEl = document.getElementById("sensitivity");
 
+// ---------- audio editor refs ----------
+const editorPanel = document.getElementById("editor-panel");
+const trimCanvas = document.getElementById("trim-canvas");
+const trimCtx = trimCanvas.getContext("2d");
+const trimStartEl = document.getElementById("trim-start");
+const trimEndEl = document.getElementById("trim-end");
+const btnResetTrim = document.getElementById("btn-reset-trim");
+const fadeInEl = document.getElementById("fade-in");
+const fadeOutEl = document.getElementById("fade-out");
+const reverseToggle = document.getElementById("reverse-toggle");
+const normalizeToggle = document.getElementById("normalize-toggle");
+const eqBassEl = document.getElementById("eq-bass");
+const eqMidEl = document.getElementById("eq-mid");
+const eqTrebleEl = document.getElementById("eq-treble");
+const eqBassValueEl = document.getElementById("eq-bass-value");
+const eqMidValueEl = document.getElementById("eq-mid-value");
+const eqTrebleValueEl = document.getElementById("eq-treble-value");
+const btnExport = document.getElementById("btn-export");
+const exportStatusEl = document.getElementById("export-status");
+
+let originalBuffer = null; // decoded AudioBuffer of the loaded file, used for editing
+let bassFilter = null, midFilter = null, trebleFilter = null;
+let trimDragTarget = null; // "start" | "end" | null, while dragging on the trim canvas
+
 let audioCtx = null;
 let analyser = null;
 let gainNode = null;
@@ -81,6 +105,21 @@ function setupWebAudioGraph() {
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   sourceNode = audioCtx.createMediaElementSource(audioEl);
   gainNode = audioCtx.createGain();
+
+  // 3-band EQ, live — the same filters are re-created (with the same
+  // gain values) during export, so what you hear while previewing is
+  // what ends up in the downloaded file
+  bassFilter = audioCtx.createBiquadFilter();
+  bassFilter.type = "lowshelf";
+  bassFilter.frequency.value = 200;
+  midFilter = audioCtx.createBiquadFilter();
+  midFilter.type = "peaking";
+  midFilter.frequency.value = 1000;
+  midFilter.Q.value = 0.7;
+  trebleFilter = audioCtx.createBiquadFilter();
+  trebleFilter.type = "highshelf";
+  trebleFilter.frequency.value = 4000;
+
   analyser = audioCtx.createAnalyser();
   analyser.fftSize = 512;
   analyser.smoothingTimeConstant = 0.82;
@@ -88,9 +127,16 @@ function setupWebAudioGraph() {
   timeData = new Uint8Array(analyser.fftSize);
 
   sourceNode.connect(gainNode);
-  gainNode.connect(analyser);
+  gainNode.connect(bassFilter);
+  bassFilter.connect(midFilter);
+  midFilter.connect(trebleFilter);
+  trebleFilter.connect(analyser);
   analyser.connect(audioCtx.destination);
   gainNode.gain.value = parseFloat(volumeEl.value);
+
+  bassFilter.gain.value = parseFloat(eqBassEl.value);
+  midFilter.gain.value = parseFloat(eqMidEl.value);
+  trebleFilter.gain.value = parseFloat(eqTrebleEl.value);
 }
 
 function loadFile(file) {
@@ -107,6 +153,29 @@ function loadFile(file) {
   // it's visible, re-measure so the internal bitmap matches the CSS size
   resizeCanvasForDPR();
   audioEl.load();
+
+  // decode a separate copy for editing — the <audio> element handles
+  // playback/visualization, this buffer is what gets sliced and exported
+  setupWebAudioGraph();
+  exportStatusEl.textContent = "";
+  exportStatusEl.className = "mono export-status";
+  file.arrayBuffer()
+    .then((buf) => audioCtx.decodeAudioData(buf))
+    .then((decoded) => {
+      originalBuffer = decoded;
+      trimStartEl.value = "0";
+      trimEndEl.value = decoded.duration.toFixed(2);
+      trimStartEl.max = decoded.duration.toFixed(2);
+      trimEndEl.max = decoded.duration.toFixed(2);
+      editorPanel.classList.remove("hidden");
+      resizeTrimCanvasForDPR();
+      drawTrimWaveform();
+    })
+    .catch(() => {
+      // editing needs a decodable buffer; playback/visualizer still work
+      // fine even if this fails, so we just leave the editor panel hidden
+      editorPanel.classList.add("hidden");
+    });
 }
 
 dropzone.addEventListener("click", () => fileInput.click());
@@ -194,6 +263,20 @@ speedEl.addEventListener("input", () => {
   const v = parseFloat(speedEl.value);
   audioEl.playbackRate = v;
   speedValueEl.textContent = `${v.toFixed(2)}×`;
+});
+
+// ---------- EQ (live preview) ----------
+eqBassEl.addEventListener("input", () => {
+  if (bassFilter) bassFilter.gain.value = parseFloat(eqBassEl.value);
+  eqBassValueEl.textContent = `${eqBassEl.value} dB`;
+});
+eqMidEl.addEventListener("input", () => {
+  if (midFilter) midFilter.gain.value = parseFloat(eqMidEl.value);
+  eqMidValueEl.textContent = `${eqMidEl.value} dB`;
+});
+eqTrebleEl.addEventListener("input", () => {
+  if (trebleFilter) trebleFilter.gain.value = parseFloat(eqTrebleEl.value);
+  eqTrebleValueEl.textContent = `${eqTrebleEl.value} dB`;
 });
 
 // ---------- canvas rendering ----------
@@ -358,3 +441,238 @@ function drawCircle(w, h, sensitivity) {
 
 // initial sizing
 resizeCanvasForDPR();
+
+// ============================================================
+// TRIM WAVEFORM — a static peaks overview of the whole file, with the
+// selected [start, end] region highlighted. Click or drag to adjust
+// whichever endpoint is closer.
+// ============================================================
+function resizeTrimCanvasForDPR() {
+  const dpr = window.devicePixelRatio || 1;
+  const rect = trimCanvas.getBoundingClientRect();
+  trimCanvas.width = rect.width * dpr;
+  trimCanvas.height = rect.height * dpr;
+  trimCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+window.addEventListener("resize", () => {
+  if (originalBuffer) { resizeTrimCanvasForDPR(); drawTrimWaveform(); }
+});
+
+function drawTrimWaveform() {
+  if (!originalBuffer) return;
+  const w = trimCanvas.clientWidth;
+  const h = trimCanvas.clientHeight;
+  trimCtx.clearRect(0, 0, w, h);
+
+  // peaks, downsampled across the canvas width
+  const data = originalBuffer.getChannelData(0);
+  const step = Math.max(1, Math.floor(data.length / w));
+  trimCtx.fillStyle = "#3a3a42";
+  for (let x = 0; x < w; x++) {
+    let min = 1, max = -1;
+    const base = x * step;
+    for (let i = 0; i < step; i++) {
+      const v = data[base + i] || 0;
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+    const yMin = (1 - (max + 1) / 2) * h;
+    const yMax = (1 - (min + 1) / 2) * h;
+    trimCtx.fillRect(x, yMin, 1, Math.max(1, yMax - yMin));
+  }
+
+  // selected-region highlight
+  const dur = originalBuffer.duration;
+  const start = Math.max(0, Math.min(dur, parseFloat(trimStartEl.value) || 0));
+  const end = Math.max(start, Math.min(dur, parseFloat(trimEndEl.value) || dur));
+  const xStart = (start / dur) * w;
+  const xEnd = (end / dur) * w;
+
+  trimCtx.fillStyle = "rgba(228,40,60,0.16)";
+  trimCtx.fillRect(xStart, 0, xEnd - xStart, h);
+  trimCtx.fillStyle = "#FF4D67";
+  trimCtx.fillRect(xStart - 1.5, 0, 3, h);
+  trimCtx.fillRect(xEnd - 1.5, 0, 3, h);
+}
+
+function trimPointFromEvent(e) {
+  const rect = trimCanvas.getBoundingClientRect();
+  const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+  return (x / rect.width) * originalBuffer.duration;
+}
+
+trimCanvas.addEventListener("mousedown", (e) => {
+  if (!originalBuffer) return;
+  const t = trimPointFromEvent(e);
+  const start = parseFloat(trimStartEl.value) || 0;
+  const end = parseFloat(trimEndEl.value) || originalBuffer.duration;
+  trimDragTarget = Math.abs(t - start) <= Math.abs(t - end) ? "start" : "end";
+  updateTrimFromDrag(t);
+});
+window.addEventListener("mousemove", (e) => {
+  if (!trimDragTarget || !originalBuffer) return;
+  updateTrimFromDrag(trimPointFromEvent(e));
+});
+window.addEventListener("mouseup", () => { trimDragTarget = null; });
+
+function updateTrimFromDrag(t) {
+  if (trimDragTarget === "start") {
+    const end = parseFloat(trimEndEl.value) || originalBuffer.duration;
+    trimStartEl.value = Math.min(t, end).toFixed(2);
+  } else {
+    const start = parseFloat(trimStartEl.value) || 0;
+    trimEndEl.value = Math.max(t, start).toFixed(2);
+  }
+  drawTrimWaveform();
+}
+
+trimStartEl.addEventListener("input", drawTrimWaveform);
+trimEndEl.addEventListener("input", drawTrimWaveform);
+btnResetTrim.addEventListener("click", () => {
+  if (!originalBuffer) return;
+  trimStartEl.value = "0";
+  trimEndEl.value = originalBuffer.duration.toFixed(2);
+  drawTrimWaveform();
+});
+
+// ============================================================
+// EXPORT — slice, reverse, fade, EQ (offline render), normalize, then
+// encode to a standard 16-bit PCM WAV file for download. The original
+// file/buffer is never modified; this always produces a new file.
+// ============================================================
+function audioBufferToWav(buffer) {
+  const numCh = buffer.numberOfChannels;
+  const sr = buffer.sampleRate;
+  const len = buffer.length;
+  const bytesPerSample = 2;
+  const blockAlign = numCh * bytesPerSample;
+  const dataSize = len * blockAlign;
+  const bufferArr = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(bufferArr);
+
+  function writeStr(offset, str) {
+    for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+  }
+
+  writeStr(0, "RIFF");
+  view.setUint32(4, 36 + dataSize, true);
+  writeStr(8, "WAVE");
+  writeStr(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, numCh, true);
+  view.setUint32(24, sr, true);
+  view.setUint32(28, sr * blockAlign, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bytesPerSample * 8, true);
+  writeStr(36, "data");
+  view.setUint32(40, dataSize, true);
+
+  const channels = [];
+  for (let ch = 0; ch < numCh; ch++) channels.push(buffer.getChannelData(ch));
+
+  let offset = 44;
+  for (let i = 0; i < len; i++) {
+    for (let ch = 0; ch < numCh; ch++) {
+      const s = Math.max(-1, Math.min(1, channels[ch][i]));
+      view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+      offset += 2;
+    }
+  }
+  return new Blob([bufferArr], { type: "audio/wav" });
+}
+
+btnExport.addEventListener("click", async () => {
+  if (!originalBuffer) return;
+  btnExport.disabled = true;
+  exportStatusEl.className = "mono export-status";
+  exportStatusEl.textContent = "Procesando…";
+
+  try {
+    const sr = originalBuffer.sampleRate;
+    const numCh = originalBuffer.numberOfChannels;
+    const dur = originalBuffer.duration;
+    const start = Math.max(0, Math.min(dur, parseFloat(trimStartEl.value) || 0));
+    const end = Math.max(start + 0.01, Math.min(dur, parseFloat(trimEndEl.value) || dur));
+    const startSample = Math.floor(start * sr);
+    const endSample = Math.floor(end * sr);
+    const sliceLen = Math.max(1, endSample - startSample);
+
+    // 1. slice
+    const sliced = audioCtx.createBuffer(numCh, sliceLen, sr);
+    for (let ch = 0; ch < numCh; ch++) {
+      const src = originalBuffer.getChannelData(ch).subarray(startSample, endSample);
+      sliced.copyToChannel(new Float32Array(src), ch);
+    }
+
+    // 2. reverse
+    if (reverseToggle.checked) {
+      for (let ch = 0; ch < numCh; ch++) {
+        const data = sliced.getChannelData(ch);
+        data.reverse();
+        sliced.copyToChannel(data, ch);
+      }
+    }
+
+    // 3. fades
+    const fadeInSamples = Math.min(sliceLen, Math.floor((parseFloat(fadeInEl.value) || 0) * sr));
+    const fadeOutSamples = Math.min(sliceLen, Math.floor((parseFloat(fadeOutEl.value) || 0) * sr));
+    for (let ch = 0; ch < numCh; ch++) {
+      const data = sliced.getChannelData(ch);
+      for (let i = 0; i < fadeInSamples; i++) data[i] *= i / fadeInSamples;
+      for (let i = 0; i < fadeOutSamples; i++) data[sliceLen - 1 - i] *= i / fadeOutSamples;
+      sliced.copyToChannel(data, ch);
+    }
+
+    // 4. EQ, rendered offline with the same filter settings as the live preview
+    const offlineCtx = new OfflineAudioContext(numCh, sliceLen, sr);
+    const src = offlineCtx.createBufferSource();
+    src.buffer = sliced;
+    const bass = offlineCtx.createBiquadFilter();
+    bass.type = "lowshelf"; bass.frequency.value = 200; bass.gain.value = parseFloat(eqBassEl.value);
+    const mid = offlineCtx.createBiquadFilter();
+    mid.type = "peaking"; mid.frequency.value = 1000; mid.Q.value = 0.7; mid.gain.value = parseFloat(eqMidEl.value);
+    const treble = offlineCtx.createBiquadFilter();
+    treble.type = "highshelf"; treble.frequency.value = 4000; treble.gain.value = parseFloat(eqTrebleEl.value);
+    src.connect(bass); bass.connect(mid); mid.connect(treble); treble.connect(offlineCtx.destination);
+    src.start(0);
+    const rendered = await offlineCtx.startRendering();
+
+    // 5. normalize
+    if (normalizeToggle.checked) {
+      let peak = 0;
+      for (let ch = 0; ch < numCh; ch++) {
+        const data = rendered.getChannelData(ch);
+        for (let i = 0; i < data.length; i++) peak = Math.max(peak, Math.abs(data[i]));
+      }
+      if (peak > 0.0001) {
+        const scale = 0.98 / peak;
+        for (let ch = 0; ch < numCh; ch++) {
+          const data = rendered.getChannelData(ch);
+          for (let i = 0; i < data.length; i++) data[i] *= scale;
+          rendered.copyToChannel(data, ch);
+        }
+      }
+    }
+
+    // 6. encode + download
+    const wavBlob = audioBufferToWav(rendered);
+    const url = URL.createObjectURL(wavBlob);
+    const a = document.createElement("a");
+    a.href = url;
+    const baseName = (fileNameEl.textContent || "audio").replace(/\.[^.]+$/, "");
+    a.download = `${baseName}-editado.wav`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+
+    exportStatusEl.textContent = "¡Listo! Descarga iniciada.";
+    exportStatusEl.className = "mono export-status success";
+  } catch (err) {
+    exportStatusEl.textContent = "No se ha podido exportar. Prueba con otro archivo.";
+    exportStatusEl.className = "mono export-status";
+  } finally {
+    btnExport.disabled = false;
+  }
+});

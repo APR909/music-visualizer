@@ -103,6 +103,70 @@
     <audio id="audio-el" preload="metadata"></audio>
   </section>
 
+  <!-- AUDIO EDITOR -->
+  <section class="panel hidden" id="editor-panel">
+    <p class="eyebrow mono">// edición</p>
+    <h2>Editor de audio</h2>
+    <p class="panel-note">Recorta, aplica fundidos, ecualiza, invierte o normaliza el archivo cargado arriba, y descarga el resultado como un WAV nuevo — el archivo original nunca se modifica.</p>
+
+    <div class="trim-wrap">
+      <canvas id="trim-canvas" width="900" height="90"></canvas>
+    </div>
+    <div class="trim-fields">
+      <label class="editor-control">
+        <span>Inicio (s)</span>
+        <input id="trim-start" type="number" min="0" step="0.1" value="0">
+      </label>
+      <label class="editor-control">
+        <span>Fin (s)</span>
+        <input id="trim-end" type="number" min="0" step="0.1" value="0">
+      </label>
+      <button id="btn-reset-trim" class="btn-text" type="button">Seleccionar todo</button>
+    </div>
+
+    <div class="editor-row">
+      <label class="editor-control">
+        <span>Fundido de entrada (s)</span>
+        <input id="fade-in" type="range" min="0" max="5" value="0" step="0.1">
+      </label>
+      <label class="editor-control">
+        <span>Fundido de salida (s)</span>
+        <input id="fade-out" type="range" min="0" max="5" value="0" step="0.1">
+      </label>
+      <label class="editor-control editor-control-check">
+        <input id="reverse-toggle" type="checkbox">
+        <span>Invertir audio</span>
+      </label>
+      <label class="editor-control editor-control-check">
+        <input id="normalize-toggle" type="checkbox">
+        <span>Normalizar volumen</span>
+      </label>
+    </div>
+
+    <div class="editor-row">
+      <label class="editor-control">
+        <span>Graves</span>
+        <input id="eq-bass" type="range" min="-24" max="24" value="0" step="1">
+        <span id="eq-bass-value" class="mono">0 dB</span>
+      </label>
+      <label class="editor-control">
+        <span>Medios</span>
+        <input id="eq-mid" type="range" min="-24" max="24" value="0" step="1">
+        <span id="eq-mid-value" class="mono">0 dB</span>
+      </label>
+      <label class="editor-control">
+        <span>Agudos</span>
+        <input id="eq-treble" type="range" min="-24" max="24" value="0" step="1">
+        <span id="eq-treble-value" class="mono">0 dB</span>
+      </label>
+    </div>
+
+    <div class="export-row">
+      <button id="btn-export" class="btn-primary" type="button">Aplicar y exportar (.wav)</button>
+      <span id="export-status" class="mono export-status"></span>
+    </div>
+  </section>
+
 </main>
 
 <footer class="site-footer mono">
